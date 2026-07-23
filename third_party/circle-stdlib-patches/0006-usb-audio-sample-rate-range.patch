@@ -1,0 +1,13 @@
+--- a/libs/circle/lib/usb/usbaudiostreaming.cpp
++++ b/libs/circle/lib/usb/usbaudiostreaming.cpp
+@@ -652,8 +652,8 @@
+ 	unsigned i;
+ 	for (i = 0; i < m_DeviceInfo.SampleRateRanges; i++)
+ 	{
+-		if (   m_DeviceInfo.SampleRateRange[i].Min >= nSampleRate
+-		    && m_DeviceInfo.SampleRateRange[i].Max <= nSampleRate)
++		if (   m_DeviceInfo.SampleRateRange[i].Min <= nSampleRate
++		    && m_DeviceInfo.SampleRateRange[i].Max >= nSampleRate)
+ 		{
+ 			break;
+ 		}

@@ -1,0 +1,196 @@
+# Third-party source references
+
+This document records the external projects and source snapshots used by the
+current BMX port. It distinguishes between sources that are vendored in
+this repository, sources downloaded by build/staging scripts, and sources used
+only as implementation references.
+
+Last checked: 2026-06-15
+
+## BMC64 upstream
+
+| Item | Value |
+| --- | --- |
+| Role | Original upstream project and base for BMX |
+| Upstream URL | https://github.com/randyrossi/bmc64 |
+| Local remote | `upstream` |
+| Base commit | `9c2772e094fd29dca6bf621268f003f64a3197a9` |
+| Base commit URL | https://github.com/randyrossi/bmc64/commit/9c2772e094fd29dca6bf621268f003f64a3197a9 |
+| Base commit subject | `Merge pull request #296 from aminch/mouse-click-fix-248` |
+| Base commit date | 2025-07-26 |
+
+The current branch is based on this upstream commit. BMX changes live on
+top of it in this repository.
+
+## VICE
+
+### VICE 3.10
+
+| Item | Value |
+| --- | --- |
+| Role | Active emulator core for the `vice310` branch |
+| Local path | `third_party/vice-3.10` |
+| Local import commit | `ae4d04aa6029ac2f1df83a051c5d2cf3573c611d` |
+| Local import commit URL | https://github.com/kdre/bmx-private/commit/ae4d04aa6029ac2f1df83a051c5d2cf3573c611d |
+| Version in tree | `3.10.0` (`third_party/vice-3.10/src/version.h`) |
+| Upstream tag | `3.10.0` |
+| Upstream tag commit | `4d283a2e7dd59b7e378524878e81ecc7826b700c` |
+| Upstream source URL | https://github.com/VICE-Team/svn-mirror/tree/3.10.0 |
+
+The VICE 3.10 source is vendored in the repository. BMX patches and Raspi
+adapter work should be reviewed relative to the local import commit
+`ae4d04aa6029ac2f1df83a051c5d2cf3573c611d`.
+
+### TCPSER modem-core subset
+
+| Item | Value |
+| --- | --- |
+| Role | Hayes-compatible modem command parser used by BMX RS232 Hayes Modem mode |
+| Local path | `third_party/vice-3.10/src/rs232drv/tcpser` |
+| Upstream URL | https://github.com/go4retro/tcpser |
+| Upstream branch checked | `master` |
+| Upstream commit checked | `fe7feff4862406b277e009d14c219f5d16cf1222` |
+| Upstream commit URL | https://github.com/go4retro/tcpser/commit/fe7feff4862406b277e009d14c219f5d16cf1222 |
+| License | GPL-2.0-or-later, as stated in the upstream README |
+| Staged license file | `LICENCE.tcpser` |
+
+BMX imports only the stable modem parser/core files from tcpser: `modem_core.*`,
+`getcmd.*`, `phone_book.*`, `dce.h`, `line.h` and `nvt.h`. The original tcpser
+POSIX application is not built. BMX supplies `bmx_tcpser_adapter.c` to connect
+the modem core to VICE RS232/ACIA/Userport I/O and Circle sockets.
+
+### CCGMS Future
+
+| Item | Value |
+| --- | --- |
+| Role | C64 terminal utility included on the default BMX utility disk |
+| Local path | `utils-disk/c64/ccgms.prg` |
+| Upstream URL | https://github.com/mist64/ccgmsterm |
+| Release asset URL | https://github.com/mist64/ccgmsterm/releases/download/v0.2/ccgms.prg |
+| Version | `v0.2` |
+| License | BSD-3-Clause |
+| Staged license file | `LICENCE.ccgms` |
+
+The Pi4/Pi5 staging scripts build `utils/c64/utils.d64` from
+`utils-disk/c64/` using `c1541`. The generated disk image is staged onto the
+boot partition. It is initially selected for drive 8, and can be changed or
+disabled under `Drives > Default disk`. The generated `utils.d64` is not
+stored in git.
+
+## Circle and circle-stdlib
+
+### circle-stdlib
+
+| Item | Value |
+| --- | --- |
+| Role | Bare-metal C/C++ runtime and Circle integration used by Pi4 and Pi5 builds |
+| Local Pi4 path | `third_party/circle-stdlib-pi4` |
+| Local Pi5 path | `third_party/circle-stdlib-pi5` |
+| Upstream URL | https://github.com/smuehlst/circle-stdlib |
+| Version/tag | `v20` |
+| Commit | `a4fbed9b369e8285e4a12b2bb0588511210b83a6` |
+| Commit URL | https://github.com/smuehlst/circle-stdlib/commit/a4fbed9b369e8285e4a12b2bb0588511210b83a6 |
+
+Both Pi4 and Pi5 build helpers clone `circle-stdlib` tag `v20` into separate
+local directories so each board can be configured independently.
+
+### Circle submodule inside circle-stdlib
+
+| Item | Value |
+| --- | --- |
+| Role | Bare-metal Raspberry Pi framework used by BMX |
+| Local Pi4 path | `third_party/circle-stdlib-pi4/libs/circle` |
+| Local Pi5 path | `third_party/circle-stdlib-pi5/libs/circle` |
+| Upstream URL | https://github.com/rsta2/circle |
+| Version/tag | `Step51` |
+| Commit | `6177984e30fac5e65582d171d43f1563368a94ac` |
+| Commit URL | https://github.com/rsta2/circle/commit/6177984e30fac5e65582d171d43f1563368a94ac |
+| Annotated tag object | `b4728d14738344d9b383585597776f926c95aec0` |
+
+## Raspberry Pi firmware files
+
+### Pi4 firmware staged via Circle boot files
+
+| Item | Value |
+| --- | --- |
+| Role | Pi4 boot firmware, DTBs and Circle ARM stub copied by `tools/pi4/stage_pi4_sd.sh` |
+| Source mechanism | Circle boot Makefile in `third_party/circle-stdlib-pi4/libs/circle/boot` |
+| Firmware repository | https://github.com/raspberrypi/firmware |
+| Firmware commit configured by Circle | `0641c5bf25d185d5bf25d8dcafd1da6dc8fdbf68` |
+| Firmware commit URL | https://github.com/raspberrypi/firmware/commit/0641c5bf25d185d5bf25d8dcafd1da6dc8fdbf68 |
+| Files used | `start4.elf`, `fixup4.dat`, `bcm2711-rpi-4-b.dtb`, `bcm2711-rpi-400.dtb`, `bcm2711-rpi-cm4.dtb`, `armstub7-rpi4.bin`, licenses |
+
+Local checksums from the current Pi4 Circle boot directory:
+
+| File | SHA-256 |
+| --- | --- |
+| `start4.elf` | `61d198caf99fdf3b82467dc7b5319a6bae1a99fe22c94fdafaa86711490a0c23` |
+| `fixup4.dat` | `304b53a7a5a7129531b2674b0fd55240086c5bbd276ff029c63cd68fcf28c0e1` |
+| `armstub7-rpi4.bin` | `7e4e4d27a4fd7bd469c1a64c6db4f3a9b20d12db178d6ac1a29a240a12b12151` |
+
+### Pi5 DTBs and overlays staged by script
+
+| Item | Value |
+| --- | --- |
+| Role | Pi5/Pi500 DTBs and overlays copied by `tools/pi5/stage_pi5_sd.sh` |
+| Source mechanism | Direct `curl` downloads from `raw.githubusercontent.com/raspberrypi/firmware/master` |
+| Firmware repository | https://github.com/raspberrypi/firmware |
+| Current `master` at check time | `ac55e8bb8792f6ecd4f4531e3eb75801e0dcbbab` |
+| Current commit URL | https://github.com/raspberrypi/firmware/commit/ac55e8bb8792f6ecd4f4531e3eb75801e0dcbbab |
+| Files downloaded | `bcm2712-rpi-5-b.dtb`, `bcm2712d0-rpi-5-b.dtb`, `overlays/bcm2712d0.dtbo`, optionally `overlays/uart0-pi5.dtbo` |
+
+Important: the Pi5 staging script currently downloads from `master`, so these
+files are not yet pinned by commit in the script. The commit above is the remote
+state observed on 2026-05-31, not a guaranteed future build input.
+
+## Raspberry Pi Linux kernel reference
+
+| Item | Value |
+| --- | --- |
+| Role | Reference source for the experimental Pi5KMS HDMI modeset implementation |
+| Repository | https://github.com/raspberrypi/linux |
+| Branch checked | `rpi-6.12.y` |
+| Commit checked | `0a382e93f18ae5b8b7f10d62106b5480c2a0f1dd` |
+| Commit URL | https://github.com/raspberrypi/linux/commit/0a382e93f18ae5b8b7f10d62106b5480c2a0f1dd |
+| Relevant files | `drivers/gpu/drm/vc4/vc4_hdmi.c`, `drivers/gpu/drm/vc4/vc4_hdmi_phy.c`, `drivers/gpu/drm/vc4/vc4_hvs.c` |
+
+This kernel tree is not vendored and is not linked into BMX. It was used
+as a reference for Pi5 HDMI register programming, PHY setup and HVS scanout.
+The BMX implementation lives in `src/pi5kms/`.
+
+Useful reference links:
+
+- https://github.com/raspberrypi/linux/blob/0a382e93f18ae5b8b7f10d62106b5480c2a0f1dd/drivers/gpu/drm/vc4/vc4_hdmi.c
+- https://github.com/raspberrypi/linux/blob/0a382e93f18ae5b8b7f10d62106b5480c2a0f1dd/drivers/gpu/drm/vc4/vc4_hdmi_phy.c
+- https://github.com/raspberrypi/linux/blob/0a382e93f18ae5b8b7f10d62106b5480c2a0f1dd/drivers/gpu/drm/vc4/vc4_hvs.c
+
+## ARM GNU toolchains
+
+| Board | Toolchain | URL |
+| --- | --- | --- |
+| Pi4/Pi400 | `arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi` | https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi.tar.xz |
+| Pi5/Pi500 | `arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-elf` | https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-elf.tar.xz |
+
+The build scripts download these into `.toolchains/` only if no matching
+compiler is already available in `PATH`.
+
+## CRT shader source
+
+| Item | Value |
+| --- | --- |
+| Role | Shader source used by the BMC64 display path |
+| Local path | `third_party/shaders` |
+| Source note | Files carry copyright notice `Copyright (C) 2015-2016 davej` |
+
+## Re-check commands
+
+```sh
+git remote -v
+git submodule status --recursive
+git -C third_party/circle-stdlib-pi4 rev-parse HEAD
+git -C third_party/circle-stdlib-pi4/libs/circle rev-parse HEAD
+git ls-remote https://github.com/raspberrypi/linux.git refs/heads/rpi-6.12.y
+git ls-remote https://github.com/raspberrypi/firmware.git refs/heads/master
+git ls-remote https://github.com/VICE-Team/svn-mirror.git refs/tags/3.10.0
+git ls-remote https://github.com/go4retro/tcpser.git refs/heads/master
+```

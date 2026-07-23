@@ -1,0 +1,629 @@
+diff --git a/libs/circle/include/circle/usb/usbsubsystem.h b/libs/circle/include/circle/usb/usbsubsystem.h
+index 5923786..113e0e3 100644
+--- a/libs/circle/include/circle/usb/usbsubsystem.h
++++ b/libs/circle/include/circle/usb/usbsubsystem.h
+@@ -41,6 +41,8 @@ public:
+ 
+ 	boolean UpdatePlugAndPlay (void) override;
+ 
++	void ProcessRecoveries (void);
++
+ 	int GetDescriptor (CUSBEndpoint *pEndpoint,
+ 			   unsigned char ucType, unsigned char ucIndex,
+ 			   void *pBuffer, unsigned nBufSize,
+diff --git a/libs/circle/include/circle/usb/xhci.h b/libs/circle/include/circle/usb/xhci.h
+index 400146e..f78e7c7 100644
+--- a/libs/circle/include/circle/usb/xhci.h
++++ b/libs/circle/include/circle/usb/xhci.h
+@@ -325,6 +325,7 @@ PACKED;
+ 
+ // TRB Completion Codes
+ #define XHCI_TRB_COMPLETION_CODE_SUCCESS			1
++#define XHCI_TRB_COMPLETION_CODE_USB_TRANSACTION_ERROR		4
+ #define XHCI_TRB_COMPLETION_CODE_NO_SLOTS_AVAILABLE_ERROR	9
+ #define XHCI_TRB_COMPLETION_CODE_SHORT_PACKET			13
+ #define XHCI_TRB_COMPLETION_CODE_RING_UNDERRUN			14
+@@ -366,6 +367,7 @@ PACKED;
+ #define XHCI_CMD_TRB_EVALUATE_CONTEXT_CONTROL_SLOTID__SHIFT	24
+ #define XHCI_CMD_TRB_EVALUATE_CONTEXT_CONTROL_SLOTID__MASK	(0xFF << 24)
+ 
++#define XHCI_CMD_TRB_RESET_ENDPOINT_CONTROL_TSP			(1 << 9)
+ #define XHCI_CMD_TRB_RESET_ENDPOINT_CONTROL_ENDPOINTID__SHIFT	16
+ #define XHCI_CMD_TRB_RESET_ENDPOINT_CONTROL_SLOTID__SHIFT	24
+ 
+diff --git a/libs/circle/include/circle/usb/xhcicommandmanager.h b/libs/circle/include/circle/usb/xhcicommandmanager.h
+index 5afe73d..1efbcd1 100644
+--- a/libs/circle/include/circle/usb/xhcicommandmanager.h
++++ b/libs/circle/include/circle/usb/xhcicommandmanager.h
+@@ -43,7 +43,8 @@ public:
+ 	int AddressDevice (u8 uchSlotID, TXHCIInputContext *pInputContext, boolean bSetAddress);
+ 	int ConfigureEndpoint (u8 uchSlotID, TXHCIInputContext *pInputContext, boolean bDeconfigure);
+ 	int EvaluateContext (u8 uchSlotID, TXHCIInputContext *pInputContext);
+-	int ResetEndpoint (u8 uchSlotID, u8 uchEndpointID);
++	int ResetEndpoint (u8 uchSlotID, u8 uchEndpointID,
++			   boolean bPreserveTransferState = FALSE);
+ 	int SetTRDequeuePointer (u8 uchSlotID, u8 uchEndpointID, TXHCITRB *pTRB, boolean bDCS);
+ 	int NoOp (void);
+ 
+diff --git a/libs/circle/include/circle/usb/xhcidevice.h b/libs/circle/include/circle/usb/xhcidevice.h
+index b5eb023..b367320 100644
+--- a/libs/circle/include/circle/usb/xhcidevice.h
++++ b/libs/circle/include/circle/usb/xhcidevice.h
+@@ -33,6 +33,7 @@
+ #include <circle/usb/xhciroothub.h>
+ #include <circle/usb/xhci.h>
+ #include <circle/sysconfig.h>
++#include <circle/spinlock.h>
+ #include <circle/types.h>
+ 
+ class CXHCIDevice : public CUSBHostController	/// USB host controller interface (xHCI) driver
+@@ -50,6 +51,10 @@ public:
+ 	boolean SubmitBlockingRequest (CUSBRequest *pURB, unsigned nTimeoutMs = USB_TIMEOUT_NONE);
+ 	boolean SubmitAsyncRequest (CUSBRequest *pURB, unsigned nTimeoutMs = USB_TIMEOUT_NONE);
+ 
++	// Must be called at task level. Synchronous xHCI commands cannot be
++	// submitted from the transfer-event interrupt handler.
++	void ProcessRecoveries (void);
++
+ public:
+ 	CXHCIMMIOSpace *GetMMIOSpace (void);
+ 	CXHCISlotManager *GetSlotManager (void);
+@@ -96,6 +101,9 @@ private:
+ 	CXHCIRootHub *m_pRootHub;
+ 
+ 	boolean m_bShutdown;
++	boolean m_bInitialized;
++	CSpinLock m_RecoverySpinLock;
++	boolean m_bProcessingRecoveries;
+ };
+ 
+ #endif
+diff --git a/libs/circle/include/circle/usb/xhciendpoint.h b/libs/circle/include/circle/usb/xhciendpoint.h
+index 3728ef9..044e029 100644
+--- a/libs/circle/include/circle/usb/xhciendpoint.h
++++ b/libs/circle/include/circle/usb/xhciendpoint.h
+@@ -49,6 +49,7 @@ public:
+ 	boolean TransferAsync (CUSBRequest *pURB, unsigned nTimeoutMs);
+ 
+ 	void TransferEvent (u8 uchCompletionCode, u32 nTransferLength);
++	void ProcessRecovery (void);
+ 
+ 	boolean ResetFromHalted (void);
+ 
+@@ -88,6 +89,10 @@ private:
+ 
+ 	CUSBRequest	*m_pURB[2];
+ 	volatile boolean m_bTransferCompleted;
++	volatile boolean m_bRecoveryPending;
++	volatile boolean m_bRecoveryRunning;
++	unsigned	 m_nSoftRetryCount;
++	unsigned	 m_nHardRecoveryCount;
+ 
+ 	u8		*m_pInputContextBuffer;
+ 
+diff --git a/libs/circle/include/circle/usb/xhcislotmanager.h b/libs/circle/include/circle/usb/xhcislotmanager.h
+index f054581..6b4dbfa 100644
+--- a/libs/circle/include/circle/usb/xhcislotmanager.h
++++ b/libs/circle/include/circle/usb/xhcislotmanager.h
+@@ -39,6 +39,7 @@ public:
+ 	void FreeSlot (u8 uchSlotID);
+ 
+ 	void AssignScratchpadBufferArray (u64 *pScratchpadBufferArray);
++	void ProcessRecoveries (void);
+ 
+ #ifndef NDEBUG
+ 	void DumpStatus (void);
+diff --git a/libs/circle/include/circle/usb/xhciusbdevice.h b/libs/circle/include/circle/usb/xhciusbdevice.h
+index fc3df2a..26ae57d 100644
+--- a/libs/circle/include/circle/usb/xhciusbdevice.h
++++ b/libs/circle/include/circle/usb/xhciusbdevice.h
+@@ -47,6 +47,7 @@ public:
+ 	void RegisterEndpoint (u8 uchEndpointID, CXHCIEndpoint *pEndpoint);
+ 
+ 	void TransferEvent (u8 uchCompletionCode, u32 nTransferLength, u8 uchEndpointID);
++	void ProcessRecoveries (void);
+ 
+ #ifndef NDEBUG
+ 	void DumpStatus (void);
+diff --git a/libs/circle/lib/usb/usbsubsystem.cpp b/libs/circle/lib/usb/usbsubsystem.cpp
+index f1bf0f9..c203cfb 100644
+--- a/libs/circle/lib/usb/usbsubsystem.cpp
++++ b/libs/circle/lib/usb/usbsubsystem.cpp
+@@ -101,6 +101,15 @@ boolean CUSBSubSystem::UpdatePlugAndPlay (void)
+ 	return bResult;
+ }
+ 
++void CUSBSubSystem::ProcessRecoveries (void)
++{
++	for (unsigned i = 0; i < NumDevices; i++)
++	{
++		assert (m_pXHCIDevice[i]);
++		m_pXHCIDevice[i]->ProcessRecoveries ();
++	}
++}
++
+ int CUSBSubSystem::GetDescriptor (CUSBEndpoint *pEndpoint,
+ 				  unsigned char ucType, unsigned char ucIndex,
+ 				  void *pBuffer, unsigned nBufSize,
+diff --git a/libs/circle/lib/usb/xhcicommandmanager.cpp b/libs/circle/lib/usb/xhcicommandmanager.cpp
+index d3dfea0..79466fa 100644
+--- a/libs/circle/lib/usb/xhcicommandmanager.cpp
++++ b/libs/circle/lib/usb/xhcicommandmanager.cpp
+@@ -124,13 +124,18 @@ int CXHCICommandManager::EvaluateContext (u8 uchSlotID, TXHCIInputContext *pInpu
+ 	return DoCommand (nControl, XHCI_TO_DMA_LO (pInputContext), XHCI_TO_DMA_HI (pInputContext));
+ }
+ 
+-int CXHCICommandManager::ResetEndpoint (u8 uchSlotID, u8 uchEndpointID)
++int CXHCICommandManager::ResetEndpoint (u8 uchSlotID, u8 uchEndpointID,
++					 boolean bPreserveTransferState)
+ {
+ 	assert (XHCI_IS_SLOTID (uchSlotID));
+ 	assert (XHCI_IS_ENDPOINTID (uchEndpointID));
+ 	u32 nControl =   XHCI_TRB_TYPE_CMD_RESET_ENDPOINT << XHCI_TRB_CONTROL_TRB_TYPE__SHIFT
+ 		       | (u32) uchSlotID << XHCI_CMD_TRB_RESET_ENDPOINT_CONTROL_SLOTID__SHIFT
+ 		       | (u32) uchEndpointID <<  XHCI_CMD_TRB_RESET_ENDPOINT_CONTROL_ENDPOINTID__SHIFT;
++	if (bPreserveTransferState)
++	{
++		nControl |= XHCI_CMD_TRB_RESET_ENDPOINT_CONTROL_TSP;
++	}
+ 
+ 	return DoCommand (nControl);
+ }
+diff --git a/libs/circle/lib/usb/xhcidevice.cpp b/libs/circle/lib/usb/xhcidevice.cpp
+index 764cb74..e6ad19a 100644
+--- a/libs/circle/lib/usb/xhcidevice.cpp
++++ b/libs/circle/lib/usb/xhcidevice.cpp
+@@ -58,7 +58,10 @@ CXHCIDevice::CXHCIDevice (CInterruptSystem *pInterruptSystem, CTimer *pTimer, bo
+ 	m_pScratchpadBuffers (0),
+ 	m_pScratchpadBufferArray (0),
+ 	m_pRootHub (0),
+-	m_bShutdown (FALSE)
++	m_bShutdown (FALSE),
++	m_bInitialized (FALSE),
++	m_RecoverySpinLock (TASK_LEVEL),
++	m_bProcessingRecoveries (FALSE)
+ {
+ 	if (m_pSharedMemAllocator == 0)
+ 	{
+@@ -72,6 +75,7 @@ CXHCIDevice::CXHCIDevice (CInterruptSystem *pInterruptSystem, CTimer *pTimer, bo
+ 
+ CXHCIDevice::~CXHCIDevice (void)
+ {
++	m_bInitialized = FALSE;
+ 	m_bShutdown = TRUE;
+ 
+ 	if (m_pMMIO != 0)
+@@ -290,6 +294,8 @@ boolean CXHCIDevice::Initialize (boolean bScanDevices)
+ 	DumpStatus ();
+ #endif
+ 
++	m_bInitialized = TRUE;
++
+ 	return TRUE;
+ }
+ 
+@@ -327,6 +333,31 @@ boolean CXHCIDevice::SubmitAsyncRequest (CUSBRequest *pURB, unsigned nTimeoutMs)
+ 	return pEndpoint->TransferAsync (pURB, nTimeoutMs);
+ }
+ 
++void CXHCIDevice::ProcessRecoveries (void)
++{
++	if (   m_bShutdown
++	    || !m_bInitialized)
++	{
++		return;
++	}
++
++	m_RecoverySpinLock.Acquire ();
++	if (m_bProcessingRecoveries)
++	{
++		m_RecoverySpinLock.Release ();
++		return;
++	}
++	m_bProcessingRecoveries = TRUE;
++	m_RecoverySpinLock.Release ();
++
++	assert (m_pSlotManager != 0);
++	m_pSlotManager->ProcessRecoveries ();
++
++	m_RecoverySpinLock.Acquire ();
++	m_bProcessingRecoveries = FALSE;
++	m_RecoverySpinLock.Release ();
++}
++
+ CXHCIMMIOSpace *CXHCIDevice::GetMMIOSpace (void)
+ {
+ 	assert (m_pMMIO != 0);
+diff --git a/libs/circle/lib/usb/xhciendpoint.cpp b/libs/circle/lib/usb/xhciendpoint.cpp
+index a845481..a0a8996 100644
+--- a/libs/circle/lib/usb/xhciendpoint.cpp
++++ b/libs/circle/lib/usb/xhciendpoint.cpp
+@@ -33,16 +33,27 @@
+ 
+ static const char From[] = "xhciep";
+ 
++#define XHCI_MAX_SOFT_RETRIES	3
++#define XHCI_MAX_HARD_RECOVERIES	3
++
+ CXHCIEndpoint::CXHCIEndpoint (CXHCIUSBDevice *pDevice, CXHCIDevice *pXHCIDevice)
+ :	m_pDevice (pDevice),
+ 	m_pXHCIDevice (pXHCIDevice),
+ 	m_pMMIO (pXHCIDevice->GetMMIOSpace ()),
+ 	m_bValid (TRUE),
+ 	m_pTransferRing (0),
++	m_uchEndpointAddress (0),
++	m_uchAttributes (0),
++	m_usMaxPacketSize (USB_DEFAULT_MAX_PACKET_SIZE),
++	m_uchInterval (0),
+ 	m_uchEndpointID (1),
+ 	m_uchEndpointType (XHCI_EP_CONTEXT_EP_TYPE_CONTROL),
+ 	m_pURB {0, 0},
+ 	m_bTransferCompleted (TRUE),
++	m_bRecoveryPending (FALSE),
++	m_bRecoveryRunning (FALSE),
++	m_nSoftRetryCount (0),
++	m_nHardRecoveryCount (0),
+ 	m_pInputContextBuffer (0)
+ {
+ 	m_pTransferRing = new CXHCIRing (XHCIRingTypeTransfer,
+@@ -69,6 +80,10 @@ CXHCIEndpoint::CXHCIEndpoint (CXHCIUSBDevice *pDevice, const TUSBEndpointDescrip
+ 	m_uchEndpointType (0),
+ 	m_pURB {0, 0},
+ 	m_bTransferCompleted (TRUE),
++	m_bRecoveryPending (FALSE),
++	m_bRecoveryRunning (FALSE),
++	m_nSoftRetryCount (0),
++	m_nHardRecoveryCount (0),
+ 	m_pInputContextBuffer (0)
+ {
+ 	m_pTransferRing = new CXHCIRing (XHCIRingTypeTransfer,
+@@ -148,6 +163,17 @@ CXHCIEndpoint::CXHCIEndpoint (CXHCIUSBDevice *pDevice, const TUSBEndpointDescrip
+ 		return;
+ 	}
+ 
++	CLogger::Get ()->Write (From, LogNotice,
++			      "Configured endpoint %u (addr %02X, speed %u, attributes %02X, "
++			      "maxpkt %u, bInterval %u, xhci interval %u)",
++			      (unsigned) m_uchEndpointID,
++			      (unsigned) m_uchEndpointAddress,
++			      (unsigned) m_pDevice->GetSpeed (),
++			      (unsigned) m_uchAttributes,
++			      (unsigned) m_usMaxPacketSize,
++			      (unsigned) pDesc->bInterval,
++			      (unsigned) m_uchInterval);
++
+ 	m_pDevice->RegisterEndpoint (m_uchEndpointID, this);
+ }
+ 
+@@ -156,6 +182,9 @@ CXHCIEndpoint::~CXHCIEndpoint (void)
+ 	assert (m_bTransferCompleted);
+ 	assert (m_pInputContextBuffer == 0);
+ 
++	m_bRecoveryPending = FALSE;
++	m_bRecoveryRunning = FALSE;
++
+ 	m_uchEndpointID = 0;
+ 
+ 	delete m_pTransferRing;
+@@ -282,8 +311,15 @@ boolean CXHCIEndpoint::TransferAsync (CUSBRequest *pURB, unsigned nTimeoutMs)
+ 		assert ((uintptr) pBuffer > MEM_KERNEL_END);
+ 		CleanAndInvalidateDataCacheRange ((uintptr) pBuffer, nBufLen);
+ 
+-		if (!EnqueueTRB (  XHCI_TRB_TYPE_NORMAL << XHCI_TRB_CONTROL_TRB_TYPE__SHIFT
+-				 | XHCI_TRANSFER_TRB_CONTROL_IOC,
++		u32 nControl =   XHCI_TRB_TYPE_NORMAL << XHCI_TRB_CONTROL_TRB_TYPE__SHIFT
++			       | XHCI_TRANSFER_TRB_CONTROL_IOC;
++		if (m_uchEndpointAddress & 0x80)
++		{
++			// Match Linux xHCI: IN transfers must notify on a short packet.
++			nControl |= XHCI_TRANSFER_TRB_CONTROL_ISP;
++		}
++
++		if (!EnqueueTRB (nControl,
+ 		     		 nBufLen | 0 << XHCI_TRANSFER_TRB_STATUS_TD_SIZE__SHIFT,
+ 				 XHCI_TO_DMA_LO (pBuffer),
+ 				 XHCI_TO_DMA_HI (pBuffer)))
+@@ -426,6 +462,7 @@ void CXHCIEndpoint::TransferEvent (u8 uchCompletionCode, u32 nTransferLength)
+ 		return;
+ 	}
+ 
++	unsigned nRecoveredRetries = 0;
+ 	if (   XHCI_TRB_SUCCESS (uchCompletionCode)
+ 	    || uchCompletionCode == XHCI_TRB_COMPLETION_CODE_SHORT_PACKET)
+ 	{
+@@ -441,6 +478,24 @@ void CXHCIEndpoint::TransferEvent (u8 uchCompletionCode, u32 nTransferLength)
+ 		pURB->SetResultLen (nBufLen - nTransferLength);
+ 
+ 		pURB->SetStatus (1);
++
++		if (   m_uchEndpointID != 1
++		    && !(m_uchEndpointAddress & 0x80))
++		{
++			CLogger::Get ()->Write (From, LogNotice,
++					      "OUT transfer completed on endpoint %u "
++					      "(addr %02X, result %u/%u)",
++					      (unsigned) m_uchEndpointID,
++					      (unsigned) m_uchEndpointAddress,
++					      (unsigned) (nBufLen - nTransferLength),
++					      (unsigned) nBufLen);
++		}
++
++		m_SpinLock.Acquire ();
++		nRecoveredRetries = m_nSoftRetryCount;
++		m_nSoftRetryCount = 0;
++		m_nHardRecoveryCount = 0;
++		m_SpinLock.Release ();
+ 	}
+ 	else if (   uchCompletionCode == XHCI_TRB_COMPLETION_CODE_RING_UNDERRUN
+ 		 || uchCompletionCode == XHCI_TRB_COMPLETION_CODE_RING_OVERRUN)
+@@ -450,8 +505,54 @@ void CXHCIEndpoint::TransferEvent (u8 uchCompletionCode, u32 nTransferLength)
+ 	}
+ 	else if (pURB->GetEndpoint ()->GetType () != EndpointTypeIsochronous)
+ 	{
+-		CLogger::Get ()->Write (From, LogWarning, "Transfer error %u on endpoint %u",
+-					(unsigned) uchCompletionCode, (unsigned) m_uchEndpointID);
++		TXHCIDeviceContext *pDeviceContext = m_pDevice->GetDeviceContext ();
++		assert (pDeviceContext != 0);
++		const TXHCIEndpointContext *pEPContext =
++			&pDeviceContext->Endpoint[m_uchEndpointID-1];
++
++		CLogger::Get ()->Write (From, LogWarning,
++				      "Transfer error %u on endpoint %u "
++				      "(addr %02X, state %u, residual %u/%u, "
++				      "maxpkt %u, interval %u, buffer 0x%lX)",
++				      (unsigned) uchCompletionCode,
++				      (unsigned) m_uchEndpointID,
++				      (unsigned) m_uchEndpointAddress,
++				      (unsigned) pEPContext->EPState,
++				      (unsigned) nTransferLength,
++				      (unsigned) pURB->GetBufLen (),
++				      (unsigned) m_usMaxPacketSize,
++				      (unsigned) m_uchInterval,
++				      (unsigned long) (uintptr) pURB->GetBuffer ());
++
++		if (uchCompletionCode == XHCI_TRB_COMPLETION_CODE_USB_TRANSACTION_ERROR)
++		{
++			pURB->SetUSBError (USBErrorTransaction);
++
++			TEndpointType Type = pURB->GetEndpoint ()->GetType ();
++			if (   m_bTransferCompleted		// asynchronous transfer
++			    && (   Type == EndpointTypeBulk
++			        || Type == EndpointTypeInterrupt))
++			{
++				m_SpinLock.Acquire ();
++				if (!m_bRecoveryRunning)
++				{
++					m_bRecoveryPending = TRUE;
++				}
++				m_SpinLock.Release ();
++
++				// Reset Endpoint is a synchronous xHCI command. It must be
++				// issued at task level, not from this interrupt handler.
++				return;
++			}
++		}
++	}
++
++	if (nRecoveredRetries != 0)
++	{
++		CLogger::Get ()->Write (From, LogNotice,
++				      "Endpoint %u recovered after %u soft retr%s",
++				      (unsigned) m_uchEndpointID, nRecoveredRetries,
++				      nRecoveredRetries == 1 ? "y" : "ies");
+ 	}
+ 
+ 	m_SpinLock.Acquire ();
+@@ -462,24 +563,155 @@ void CXHCIEndpoint::TransferEvent (u8 uchCompletionCode, u32 nTransferLength)
+ 	pURB->CallCompletionRoutine ();
+ }
+ 
++void CXHCIEndpoint::ProcessRecovery (void)
++{
++	CUSBRequest *pURB;
++	boolean bSoftRetry = FALSE;
++	boolean bGiveUp = FALSE;
++	unsigned nSoftRetry = 0;
++	unsigned nHardRecovery = 0;
++
++	m_SpinLock.Acquire ();
++	if (   !m_bRecoveryPending
++	    || m_bRecoveryRunning)
++	{
++		m_SpinLock.Release ();
++		return;
++	}
++
++	pURB = m_pURB[0];
++	if (pURB == 0)
++	{
++		m_bRecoveryPending = FALSE;
++		m_SpinLock.Release ();
++		return;
++	}
++
++	m_bRecoveryPending = FALSE;
++	m_bRecoveryRunning = TRUE;
++
++	TEndpointType Type = pURB->GetEndpoint ()->GetType ();
++	if (m_nHardRecoveryCount >= XHCI_MAX_HARD_RECOVERIES)
++	{
++		bGiveUp = TRUE;
++	}
++	else if (   !m_pDevice->IsSplit ()
++	    && (   Type == EndpointTypeBulk
++	        || Type == EndpointTypeInterrupt)
++	    && m_nSoftRetryCount < XHCI_MAX_SOFT_RETRIES)
++	{
++		bSoftRetry = TRUE;
++		nSoftRetry = ++m_nSoftRetryCount;
++	}
++	m_SpinLock.Release ();
++
++	assert (m_pXHCIDevice);
++	assert (m_pDevice);
++	assert (XHCI_IS_ENDPOINTID (m_uchEndpointID));
++
++	if (bSoftRetry)
++	{
++		int nResult = m_pXHCIDevice->GetCommandManager ()->ResetEndpoint (
++							m_pDevice->GetSlotID (),
++							m_uchEndpointID, TRUE);
++		if (XHCI_CMD_SUCCESS (nResult))
++		{
++			m_SpinLock.Acquire ();
++			m_bRecoveryRunning = FALSE;
++			m_SpinLock.Release ();
++
++			CLogger::Get ()->Write (From, LogNotice,
++					      "Soft retry %u on endpoint %u",
++					      nSoftRetry, (unsigned) m_uchEndpointID);
++
++			DataSyncBarrier ();
++			m_pMMIO->db_write32 (m_pDevice->GetSlotID (),
++					     XHCI_REG_DB_TARGET_EP0 + m_uchEndpointID-1);
++			return;
++		}
++
++		CLogger::Get ()->Write (From, LogWarning,
++				      "Soft retry command failed on endpoint %u (%d)",
++				      (unsigned) m_uchEndpointID, nResult);
++	}
++
++	boolean bReset = FALSE;
++	if (!bGiveUp)
++	{
++		m_SpinLock.Acquire ();
++		nHardRecovery = ++m_nHardRecoveryCount;
++		m_SpinLock.Release ();
++
++		CLogger::Get ()->Write (From, LogWarning,
++				      "Hard recovery %u on endpoint %u",
++				      nHardRecovery, (unsigned) m_uchEndpointID);
++		bReset = ResetFromHalted ();
++	}
++	else
++	{
++		CLogger::Get ()->Write (From, LogError,
++				      "Giving up on endpoint %u after %u hard recoveries",
++				      (unsigned) m_uchEndpointID, m_nHardRecoveryCount);
++	}
++
++	m_SpinLock.Acquire ();
++	CUSBRequest *pFailedURB = m_pURB[0];
++	CUSBRequest *pQueuedURB = m_pURB[1];
++	m_pURB[0] = 0;
++	m_pURB[1] = 0;
++	m_bRecoveryPending = FALSE;
++	m_bRecoveryRunning = FALSE;
++	m_nSoftRetryCount = 0;
++	if (!bReset)
++	{
++		m_bValid = FALSE;
++	}
++	m_SpinLock.Release ();
++
++	if (   !bReset
++	    && !bGiveUp)
++	{
++		CLogger::Get ()->Write (From, LogError, "Cannot recover endpoint %u",
++					(unsigned) m_uchEndpointID);
++	}
++
++	if (pFailedURB != 0)
++	{
++		pFailedURB->SetStatus (0);
++		pFailedURB->SetUSBError (USBErrorTransaction);
++		pFailedURB->CallCompletionRoutine ();
++	}
++
++	if (pQueuedURB != 0)
++	{
++		pQueuedURB->SetStatus (0);
++		pQueuedURB->SetUSBError (USBErrorAborted);
++		pQueuedURB->CallCompletionRoutine ();
++	}
++}
++
+ boolean CXHCIEndpoint::ResetFromHalted (void)
+ {
+ 	assert (m_pXHCIDevice);
+ 	assert (m_pDevice);
+ 	assert (XHCI_IS_ENDPOINTID (m_uchEndpointID));
+ 
+-	if (!m_pXHCIDevice->GetCommandManager ()->ResetEndpoint (m_pDevice->GetSlotID (),
+-								 m_uchEndpointID))
++	int nResult = m_pXHCIDevice->GetCommandManager ()->ResetEndpoint (
++							m_pDevice->GetSlotID (),
++							m_uchEndpointID);
++	if (!XHCI_CMD_SUCCESS (nResult))
+ 	{
+ 		return FALSE;
+ 	}
+ 
+ 	assert (m_pTransferRing);
+-	return m_pXHCIDevice->GetCommandManager ()->SetTRDequeuePointer (
++	nResult = m_pXHCIDevice->GetCommandManager ()->SetTRDequeuePointer (
+ 								m_pDevice->GetSlotID (),
+ 								m_uchEndpointID,
+ 								m_pTransferRing->GetEnqueueTRB (),
+ 								!!m_pTransferRing->GetCycleState ());
++
++	return XHCI_CMD_SUCCESS (nResult);
+ }
+ 
+ #ifndef NDEBUG
+@@ -609,7 +841,9 @@ TXHCIInputContext *CXHCIEndpoint::GetInputContextConfigureEndpoint (void)
+ 	case XHCI_EP_CONTEXT_EP_TYPE_INTERRUPT_OUT:
+ 	case XHCI_EP_CONTEXT_EP_TYPE_INTERRUPT_IN:
+ 		pEPContext->Interval = m_uchInterval;
+-		pEPContext->AverageTRBLength = 16;	// best guess
++		// Match Linux xHCI and xHCI 1.1 section 4.14.1.1: for periodic
++		// endpoints this is the maximum amount available per ESIT.
++		pEPContext->AverageTRBLength = m_usMaxPacketSize;
+ 		pEPContext->MaxESITPayload = m_usMaxPacketSize;
+ 		break;
+ 
+diff --git a/libs/circle/lib/usb/xhcislotmanager.cpp b/libs/circle/lib/usb/xhcislotmanager.cpp
+index 5efde04..d5b15e2 100644
+--- a/libs/circle/lib/usb/xhcislotmanager.cpp
++++ b/libs/circle/lib/usb/xhcislotmanager.cpp
+@@ -99,6 +99,17 @@ void CXHCISlotManager::AssignScratchpadBufferArray (u64 *pScratchpadBufferArray)
+ 	m_pDCBAA[0] = XHCI_TO_DMA (pScratchpadBufferArray);
+ }
+ 
++void CXHCISlotManager::ProcessRecoveries (void)
++{
++	for (unsigned nSlotIndex = 0; nSlotIndex < XHCI_CONFIG_MAX_SLOTS; nSlotIndex++)
++	{
++		if (m_pUSBDevice[nSlotIndex] != 0)
++		{
++			m_pUSBDevice[nSlotIndex]->ProcessRecoveries ();
++		}
++	}
++}
++
+ void CXHCISlotManager::TransferEvent (u8 uchCompletionCode, u32 nTransferLength,
+ 				      u8 uchSlotID, u8 uchEndpointID)
+ {
+diff --git a/libs/circle/lib/usb/xhciusbdevice.cpp b/libs/circle/lib/usb/xhciusbdevice.cpp
+index d7d4c2e..fe3d73b 100644
+--- a/libs/circle/lib/usb/xhciusbdevice.cpp
++++ b/libs/circle/lib/usb/xhciusbdevice.cpp
+@@ -190,6 +190,17 @@ void CXHCIUSBDevice::TransferEvent (u8 uchCompletionCode, u32 nTransferLength, u
+ 	m_pEndpoint[uchEndpointID-1]->TransferEvent (uchCompletionCode, nTransferLength);
+ }
+ 
++void CXHCIUSBDevice::ProcessRecoveries (void)
++{
++	for (unsigned i = 0; i < XHCI_MAX_ENDPOINTS; i++)
++	{
++		if (m_pEndpoint[i] != 0)
++		{
++			m_pEndpoint[i]->ProcessRecovery ();
++		}
++	}
++}
++
+ #ifndef NDEBUG
+ 
+ void CXHCIUSBDevice::DumpStatus (void)

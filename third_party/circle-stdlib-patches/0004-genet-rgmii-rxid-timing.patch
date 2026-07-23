@@ -1,0 +1,16 @@
+diff --git a/libs/circle/lib/bcm54213.cpp b/libs/circle/lib/bcm54213.cpp
+index 19b03a5..918235a 100644
+--- a/libs/circle/lib/bcm54213.cpp
++++ b/libs/circle/lib/bcm54213.cpp
+@@ -1736,8 +1736,9 @@ int CBcm54213Device::mii_config(bool init)
+ 	//		(requires PCB or receiver-side delay)
+ 	// RGMII:	Add 2ns delay on TXC (90 degree shift)
+ 	//
+-	// ID is implicitly disabled for 100Mbps (RG)MII operation.
+-	u32 id_mode_dis = BIT(16);
++	// Raspberry Pi 4 uses phy-mode "rgmii-rxid" in the Linux DT, so do not
++	// disable the GENET TX clock delay here.
++	u32 id_mode_dis = 0;
+ 
+ 	sys_writel(PORT_MODE_EXT_GPHY, SYS_PORT_CTRL);
+ 
