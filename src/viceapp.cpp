@@ -68,7 +68,8 @@ bool ViceApp::Initialize(void) {
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: ViceApp::Initialize interrupt ready");
 
-  return true;
+  return bmx::update::ReportCandidateUpdateBootProgress(
+      bmx::update::CandidateUpdateBootMilestone::BaseRuntimeReady);
 }
 
 int ViceApp::circle_get_machine_timing() {
@@ -86,8 +87,9 @@ int ViceApp::circle_cycles_per_second() {
 //
 
 bool ViceScreenApp::Initialize(void) {
-  // Circle's non-throwing allocator may return null. Fail before either
-  // boot-lifetime object can be dereferenced.
+  // Circle's non-throwing allocator may return null.  Fail before either
+  // boot-lifetime object can be dereferenced; an armed candidate watchdog is
+  // intentionally left running so a failed candidate returns to fallback.
   if (mEmulatorCore == nullptr || mNetworkManager == nullptr) {
     return false;
   }
@@ -109,24 +111,40 @@ bool ViceScreenApp::Initialize(void) {
   }
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: logger ready");
+  if (!bmx::update::ReportCandidateUpdateBootProgress(
+          bmx::update::CandidateUpdateBootMilestone::LoggerReady)) {
+    return false;
+  }
 
   if (!mEmulatorCore->Init(&mViceOptions)) {
     return false;
   }
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: emulator core ready");
+  if (!bmx::update::ReportCandidateUpdateBootProgress(
+          bmx::update::CandidateUpdateBootMilestone::EmulatorCoreReady)) {
+    return false;
+  }
 
   if (!mTimer.Initialize()) {
     return false;
   }
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: timer ready");
+  if (!bmx::update::ReportCandidateUpdateBootProgress(
+          bmx::update::CandidateUpdateBootMilestone::TimerReady)) {
+    return false;
+  }
 
   if (!mGPIOManager.Initialize()) {
     return false;
   }
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: gpio manager ready");
+  if (!bmx::update::ReportCandidateUpdateBootProgress(
+          bmx::update::CandidateUpdateBootMilestone::GpioReady)) {
+    return false;
+  }
 
 #if RASPPI != 5
   if (!mVCHIQ.Initialize()) {
@@ -134,6 +152,10 @@ bool ViceScreenApp::Initialize(void) {
   }
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: vchiq ready");
+  if (!bmx::update::ReportCandidateUpdateBootProgress(
+          bmx::update::CandidateUpdateBootMilestone::VideoReady)) {
+    return false;
+  }
 #endif
 
   SetupGPIO();
@@ -166,7 +188,8 @@ bool ViceScreenApp::StartNetwork(void) {
   }
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: network initialized");
-  return true;
+  return bmx::update::ReportCandidateUpdateBootProgress(
+      bmx::update::CandidateUpdateBootMilestone::NetworkReady);
 }
 
 // Setup GPIO pins for scanning keyboard, button or joysticks.
@@ -407,6 +430,10 @@ bool ViceStdioApp::Initialize(void) {
   }
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: emmc ready");
+  if (!bmx::update::ReportCandidateUpdateBootProgress(
+          bmx::update::CandidateUpdateBootMilestone::StorageReady)) {
+    return false;
+  }
 
   mSYSFileSystemMounted = f_mount(&mFileSystemSYS, "SYS:", 1) == FR_OK;
   if (!mSYSFileSystemMounted) {
@@ -428,10 +455,18 @@ bool ViceStdioApp::Initialize(void) {
 
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: sd mount ready");
+  if (!bmx::update::ReportCandidateUpdateBootProgress(
+          bmx::update::CandidateUpdateBootMilestone::FileSystemReady)) {
+    return false;
+  }
 
   InitBootStat();
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: bootstat ready");
+  if (!bmx::update::ReportCandidateUpdateBootProgress(
+          bmx::update::CandidateUpdateBootMilestone::BootStatReady)) {
+    return false;
+  }
 
   if (mViceOptions.GetNetworkAdapter() == BMX_NETWORK_WIFI &&
       !StartNetwork()) {
@@ -460,7 +495,8 @@ bool ViceStdioApp::Initialize(void) {
 #endif
   EmitBootTrace(&mSerial, mViceOptions.SerialEnabled(),
                 "boot: usb ready");
-  return true;
+  return bmx::update::ReportCandidateUpdateBootProgress(
+      bmx::update::CandidateUpdateBootMilestone::UsbReady);
 }
 
 int ViceStdioApp::PrepareSystemShutdown(void) {

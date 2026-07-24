@@ -5,11 +5,6 @@
 namespace bmx {
 namespace update {
 
-uint32_t CompiledUpdaterAbi()
-{
-    return static_cast<uint32_t>(BMX_UPDATE_UPDATER_ABI);
-}
-
 namespace {
 
 ConfigArea AreaFromToken(const char *json, const JsonToken &token) {

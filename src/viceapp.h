@@ -48,6 +48,7 @@
 
 #include "network/network_manager.h"
 #include "update/update_service.h"
+#include "update/update_watchdog.h"
 #include "viceemulatorcore.h"
 
 // GPIO  JSFUNC   KEYFUNC  KEYCON   gpioPins Index
@@ -258,8 +259,17 @@ public:
         , mVCHIQ(&mMemory, &mInterrupt)
 #endif
         {
+     // mMachineInfo and the boot-lifetime watchdog member are already
+     // constructed here.  Arm a validated tryboot candidate before any VICE,
+     // network or emulator runtime object is allocated or initialized.
+     bmx::update::ArmCandidateUpdateWatchdogBeforeRuntime(
+         &mCandidateUpdateWatchdog);
      mEmulatorCore = new ViceEmulatorCore(&mMemory, circle_cycles_per_second());
      mNetworkManager = new bmx::NetworkManager();
+     if (mEmulatorCore != nullptr && mNetworkManager != nullptr) {
+       (void)bmx::update::ReportCandidateUpdateBootProgress(
+           bmx::update::CandidateUpdateBootMilestone::RuntimeObjectsAllocated);
+     }
   }
 
   virtual bool Initialize(void);
@@ -278,6 +288,7 @@ protected:
   CVCHIQDevice mVCHIQ;
 #endif
   CMachineInfo mMachineInfo;
+  bmx::update::CandidateUpdateWatchdog mCandidateUpdateWatchdog;
 
   CGPIOPin *config_0_joystickPins1[5];
   CGPIOPin *config_0_joystickPins2[5];

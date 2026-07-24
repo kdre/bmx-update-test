@@ -106,12 +106,17 @@ configure_circle_profile_flags() {
 }
 
 build_circle_stdlib() {
+  local circle_profile_options=()
+
+  if [ "${BMC64_BUILD_PROFILE:-release}" = release ]; then
+    circle_profile_options+=(--option NDEBUG)
+  fi
   cd "$CIRCLE_STDLIB_HOME"
   make mrproper >/dev/null 2>&1 || true
   ./configure --raspberrypi=5 --aarch64 --kernel-max-size 48 \
     --option ARM_ALLOW_MULTI_CORE --option USE_USB_SOF_INTR \
     --opt-tls \
-    --prefix aarch64-none-elf-
+    --prefix aarch64-none-elf- "${circle_profile_options[@]}"
   configure_circle_profile_flags
   make -j"$(nproc)"
   make -C libs/circle/addon/fatfs clean
@@ -143,10 +148,13 @@ build_common() {
 set_vice310_make_args() {
   local vice_cppflags vice_cflags vice_cxxflags vice_ldflags
   local debug_define=""
+  local release_define=""
   local diag_defines=""
 
   if [ "${BMC64_BUILD_PROFILE:-release}" = debug ]; then
     debug_define=" -DBMC64_DEBUG_PROFILE"
+  else
+    release_define=" -DNDEBUG"
   fi
   if [ -n "${BMC64_RS232_LOG_LEVEL:-}" ]; then
     diag_defines="$diag_defines -DBMC64_RS232_LOG_LEVEL=$BMC64_RS232_LOG_LEVEL"
@@ -161,9 +169,9 @@ set_vice310_make_args() {
     diag_defines="$diag_defines -DBMC64_NET_LOG_LEVEL=$BMC64_NET_LOG_LEVEL"
   fi
 
-  vice_cppflags="-DRASPI_COMPILE$debug_define$diag_defines -I$VICE_SRC -I$VICE_SRC/arch/shared -I$VICE_SRC/arch/raspi"
-  vice_cflags="-O3 -std=gnu11 -ffreestanding -nostdlib -fno-exceptions -mcpu=cortex-a76 -mlittle-endian$debug_define$diag_defines -I$VICE_SRC -I$SRC_DIR/src -I$SRC_DIR -I$SRC_DIR/third_party/common -I$NEWLIBDIR/include -I$CIRCLE_STDLIB_HOME/include -I$CIRCLE_STDLIB_HOME/libs/circle/addon -I$CIRCLE_STDLIB_HOME/libs/circle/addon/fatfs"
-  vice_cxxflags="-O3 -ffreestanding -nostdlib -fno-exceptions -fcheck-new -mcpu=cortex-a76 -mlittle-endian -std=c++11 -fno-rtti -nostdinc++$debug_define$diag_defines -I$VICE_SRC -I$SRC_DIR/src -I$SRC_DIR -I$SRC_DIR/third_party/common -I$NEWLIBDIR/include -I$CIRCLE_STDLIB_HOME/include -I$CIRCLE_STDLIB_HOME/libs/circle/addon -I$CIRCLE_STDLIB_HOME/libs/circle/addon/fatfs"
+  vice_cppflags="-DRASPI_COMPILE$debug_define$release_define$diag_defines -I$VICE_SRC -I$VICE_SRC/arch/shared -I$VICE_SRC/arch/raspi"
+  vice_cflags="-O3 -std=gnu11 -ffreestanding -nostdlib -fno-exceptions -mcpu=cortex-a76 -mlittle-endian$debug_define$release_define$diag_defines -I$VICE_SRC -I$SRC_DIR/src -I$SRC_DIR -I$SRC_DIR/third_party/common -I$NEWLIBDIR/include -I$CIRCLE_STDLIB_HOME/include -I$CIRCLE_STDLIB_HOME/libs/circle/addon -I$CIRCLE_STDLIB_HOME/libs/circle/addon/fatfs"
+  vice_cxxflags="-O3 -ffreestanding -nostdlib -fno-exceptions -fcheck-new -mcpu=cortex-a76 -mlittle-endian -std=c++11 -fno-rtti -nostdinc++$debug_define$release_define$diag_defines -I$VICE_SRC -I$SRC_DIR/src -I$SRC_DIR -I$SRC_DIR/third_party/common -I$NEWLIBDIR/include -I$CIRCLE_STDLIB_HOME/include -I$CIRCLE_STDLIB_HOME/libs/circle/addon -I$CIRCLE_STDLIB_HOME/libs/circle/addon/fatfs"
   vice_ldflags="-L$NEWLIBDIR/lib"
 
   vice_configure_args=(

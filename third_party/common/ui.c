@@ -107,6 +107,7 @@ static int pending_ui_key_pressed[16];
 // itself.  All strings are fixed here; authenticated or remote values never
 // reach the renderer.
 static volatile int update_progress_active;
+static int update_progress_recovery_mode;
 static unsigned update_progress_phase;
 static unsigned update_progress_per_mille;
 static int update_progress_determinate;
@@ -532,9 +533,16 @@ static void ui_action_frame() {
 }
 
 static const char *ui_update_progress_phase_name(unsigned phase) {
+  static const char *const recovery_names[] = {
+    "Verify candidate", "Commit update", "Roll back", "Restart"
+  };
   static const char *const names[] = {
     "Discovery", "Manifest", "ZIP", "Hash", "Stage", "Reboot"
   };
+  if (update_progress_recovery_mode) {
+    return phase < sizeof(recovery_names) / sizeof(recovery_names[0])
+        ? recovery_names[phase] : "Recover update";
+  }
   return phase < sizeof(names) / sizeof(names[0]) ? names[phase] : "Update";
 }
 
@@ -601,14 +609,17 @@ static void ui_render_update_progress(void) {
   value[sizeof(value) - 1U] = '\0';
   ui_draw_text(value, left + 2 * 8, top + 5 * 8, FG_COLOR);
 
-  if (update_progress_cancel_requested) {
+  if (update_progress_recovery_mode) {
+    ui_draw_text("Do not power off", left + 2 * 8,
+                 top + 6 * 8, FG_COLOR);
+  } else if (update_progress_cancel_requested) {
     ui_draw_text("Cancel pending safely", left + 2 * 8,
                  top + 6 * 8, FG_COLOR);
   } else if (update_progress_cancel_enabled) {
     ui_draw_text("RETURN/ESC: Cancel", left + 2 * 8,
                  top + 6 * 8, FG_COLOR);
   } else {
-    ui_draw_text("Do not turn off BMX", left + 2 * 8,
+    ui_draw_text("Finishing safe step", left + 2 * 8,
                  top + 6 * 8, FG_COLOR);
   }
 }
@@ -907,6 +918,7 @@ void ui_check_key(void) {
 int ui_update_progress_begin(void) {
   if (update_progress_active || !ui_enabled || current_menu < 0) return 0;
   update_progress_active = 1;
+  update_progress_recovery_mode = 0;
   update_progress_phase = 0U;
   update_progress_per_mille = 0U;
   update_progress_determinate = 0;
@@ -915,6 +927,35 @@ int ui_update_progress_begin(void) {
   update_progress_rendered = 0;
   ui_key_action = ACTION_None;
   return 1;
+}
+
+int ui_update_recovery_begin(void) {
+  if (update_progress_active || !ui_enabled || current_menu < 0) return 0;
+  update_progress_active = 1;
+  update_progress_recovery_mode = 1;
+  update_progress_phase = 0U;
+  update_progress_per_mille = 0U;
+  update_progress_determinate = 1;
+  update_progress_cancel_enabled = 0;
+  update_progress_cancel_requested = 0;
+  update_progress_rendered = 0;
+  ui_key_action = ACTION_None;
+  return 1;
+}
+
+void ui_update_recovery_present(unsigned phase,
+                                unsigned progress_per_mille) {
+  if (!update_progress_active || !update_progress_recovery_mode) return;
+  update_progress_phase = phase < 4U ? phase : 3U;
+  update_progress_per_mille = progress_per_mille <= 1000U
+      ? progress_per_mille : 1000U;
+  update_progress_determinate = 1;
+  update_progress_cancel_enabled = 0;
+  (void)ui_update_progress_pump();
+}
+
+void ui_update_recovery_end(void) {
+  if (update_progress_recovery_mode) ui_update_progress_end();
 }
 
 void ui_update_progress_present(unsigned phase, unsigned progress_per_mille,
@@ -996,6 +1037,7 @@ int ui_update_progress_pump(void) {
 
 void ui_update_progress_end(void) {
   update_progress_active = 0;
+  update_progress_recovery_mode = 0;
   update_progress_cancel_enabled = 0;
   update_progress_cancel_requested = 0;
   update_progress_rendered = 0;

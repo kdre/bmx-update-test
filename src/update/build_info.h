@@ -10,12 +10,6 @@ namespace update {
 
 static const size_t kMaximumBuildInfoBytes = 64U * 1024U;
 
-#ifndef BMX_UPDATE_UPDATER_ABI
-#define BMX_UPDATE_UPDATER_ABI 1
-#endif
-
-uint32_t CompiledUpdaterAbi();
-
 struct InstalledSchemaVersion {
     ConfigArea area;
     uint32_t version;

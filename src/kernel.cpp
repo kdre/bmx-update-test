@@ -1678,6 +1678,10 @@ void CKernel::circle_boot_complete() {
 
   DisableBootStat();
 
+  // This is deliberately after VICE/menu/filesystem startup.  The update
+  // service performs only fixed-path local transaction recovery here; it
+  // never enables networking or checks GitHub from a boot hook.
+  bmx::update::RecoverPendingUpdateAfterBoot();
 }
 
 int CKernel::circle_alloc_fbl(int layer, int pixelmode, uint8_t **pixels,

@@ -359,6 +359,10 @@ ZipLimits::ZipLimits()
 {
 }
 
+SeekableZipSource::~SeekableZipSource()
+{
+}
+
 ZipHashSink::~ZipHashSink()
 {
 }

@@ -281,10 +281,17 @@ def render_config_and_cmdline(
         cmdline = _append_first_line_option(cmdline, "enable_serial=1")
 
     active = _replace_kernel_with_selector(config, kernel_name, "bmx-active-kernel.txt")
+    candidate = active.replace(
+        "include bmx-active-kernel.txt\n",
+        "include bmx-tryboot-kernel.txt\n",
+        1,
+    )
     selector = f"# BMX-KERNEL-SELECTOR-V2\nkernel={kernel_name}\n"
     _write_text(generated / "config.txt", active)
+    _write_text(generated / "tryboot.txt", candidate)
     _write_text(generated / "cmdline.txt", cmdline)
     _write_text(generated / "bmx-active-kernel.txt", selector)
+    _write_text(generated / "bmx-tryboot-kernel.txt", selector)
 
 
 def prepare_utils(generated: Path) -> None:

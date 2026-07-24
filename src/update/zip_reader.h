@@ -86,7 +86,7 @@ struct ZipExpectedInventory {
 // ReadAt must either fill the complete requested range or return false.
 class SeekableZipSource {
 public:
-    virtual ~SeekableZipSource() {}
+    virtual ~SeekableZipSource();
     virtual bool GetSize(uint64_t *size) = 0;
     virtual bool ReadAt(uint64_t offset, uint8_t *destination, size_t size) = 0;
 };
@@ -103,7 +103,8 @@ public:
 };
 
 // The ZIP reader never opens filesystem paths. It passes only paths accepted
-// by bmx-zip32-v1 to this sink.
+// by bmx-zip32-v1 to this sink. A production sink should write into a fresh
+// transaction staging area and make CommitEntry atomic.
 class ZipExtractSink {
 public:
     virtual ~ZipExtractSink();

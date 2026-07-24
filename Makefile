@@ -110,12 +110,19 @@ BMC64_OBJS = main.o kernel.o viceoptions.o viceapp.o crt_pi_idx.o crt_pi_rgb.o \
              network/network_manager.o \
              platform/platform.o vice_api.o \
              update/build_info.o update/body_sinks.o \
+             update/candidate_health_adapters.o \
+             update/candidate_health_probe.o \
              update/circle_secure_stream.o \
+             update/circle_update_archive_transport.o \
+             update/circle_update_authorization_adapters.o \
              update/config_migration.o update/config_schema.o \
-             update/draft_test_ticket.o \
+             update/consent_digest_input.o \
+             update/crc32.o update/draft_test_ticket.o \
              update/fat_path_policy.o \
              update/github_ca_bundle.o \
              update/fatfs_config_snapshot.o \
+             update/fatfs_prepared_config.o \
+             update/fatfs_update_archive.o \
              update/fatfs_update_filesystem.o \
              update/fatfs_update_storage.o \
              update/github_draft_client.o update/github_release_client.o \
@@ -123,14 +130,25 @@ BMC64_OBJS = main.o kernel.o viceoptions.o viceapp.o crt_pi_idx.o crt_pi_rgb.o \
              update/http_response_parser.o update/https_stream.o \
              update/json_parser.o \
              update/release_manifest.o update/release_offer.o \
-             update/simple_update_installer.o \
+             update/selector_candidate_backend.o \
              update/sha256.o update/signature_envelope.o \
-             update/signature_verifier.o \
-             update/trust_store.o \
+             update/signature_verifier.o update/storage_preflight.o \
+             update/trust_store.o update/tryboot_control.o \
+             update/tryboot_reboot_control.o \
+             update/update_authorization_adapters.o \
+             update/update_health.o \
+             update/update_fault_injection.o \
+             update/update_install_readiness.o \
+             update/update_installer.o \
+             update/update_local_log.o \
              update/update_foreground_progress.o \
              update/menu_update_progress_bridge.o \
-             update/update_policy.o \
+             update/update_orchestrator.o \
+             update/update_recovery_executor.o \
+             update/update_journal.o update/update_policy.o \
+             update/update_transaction_store.o \
              update/update_service.o update/update_types.o \
+             update/update_watchdog.o \
              update/url_policy.o update/zip_reader.o
 OBJS = $(addprefix $(BUILD_DIR)/,$(BMC64_OBJS))
 
@@ -177,12 +195,15 @@ CFLAGS += -I $(SRC_DIR) -I . -I third_party/common -I "$(NEWLIBDIR)/include" -I 
 
 # Circle's freestanding operator new/new[] returns null on allocation failure.
 # GCC may otherwise assume throwing-new semantics and remove the explicit null
-# checks which protect the updater's low-memory failure paths.
+# checks which protect the updater's low-memory recovery paths.
 CPPFLAGS += -fcheck-new
 
 ifeq ($(BMC64_BUILD_PROFILE),debug)
 CFLAGS += -DBMC64_DEBUG_PROFILE
 CPPFLAGS += -DBMC64_DEBUG_PROFILE
+else
+CFLAGS += -DNDEBUG
+CPPFLAGS += -DNDEBUG
 endif
 
 # A noncanonical updater repository is a deliberately conspicuous debug-only
@@ -194,7 +215,10 @@ BMX_UPDATE_TEST_BUILD_VALUES := $(strip \
 	$(BMX_UPDATE_TEST_CHANNEL) \
 	$(BMX_UPDATE_TEST_REPOSITORY_OWNER) \
 	$(BMX_UPDATE_TEST_REPOSITORY_NAME) \
-	$(BMX_UPDATE_HARDWARE_TEST_MODE))
+	$(BMX_UPDATE_HARDWARE_TEST_MODE) \
+	$(BMX_UPDATE_FAULT_INJECTION) \
+	$(BMX_UPDATE_FAULT_POINT_ID) \
+	$(BMX_UPDATE_FAULT_OCCURRENCE))
 ifneq ($(BMX_UPDATE_TEST_BUILD_VALUES),)
 ifneq ($(BMC64_BUILD_PROFILE),debug)
 $(error BMX update test-channel variables require BMC64_BUILD_PROFILE=debug)
@@ -253,6 +277,27 @@ endif
 CPPFLAGS += -DBMX_UPDATE_HARDWARE_TEST_MODE=1
 endif
 
+BMX_UPDATE_FAULT_BUILD_VALUES := $(strip \
+	$(BMX_UPDATE_FAULT_INJECTION) \
+	$(BMX_UPDATE_FAULT_POINT_ID) \
+	$(BMX_UPDATE_FAULT_OCCURRENCE))
+ifneq ($(BMX_UPDATE_FAULT_BUILD_VALUES),)
+ifneq ($(BMX_UPDATE_HARDWARE_TEST_MODE),1)
+$(error BMX update fault injection requires BMX_UPDATE_HARDWARE_TEST_MODE=1)
+endif
+ifneq ($(BMX_UPDATE_FAULT_INJECTION),1)
+$(error BMX_UPDATE_FAULT_INJECTION must be exactly 1)
+endif
+ifeq ($(strip $(BMX_UPDATE_FAULT_POINT_ID)),)
+$(error BMX_UPDATE_FAULT_POINT_ID is required for fault injection)
+endif
+ifeq ($(strip $(BMX_UPDATE_FAULT_OCCURRENCE)),)
+$(error BMX_UPDATE_FAULT_OCCURRENCE is required for fault injection)
+endif
+CPPFLAGS += -DBMX_UPDATE_FAULT_INJECTION=1 \
+	-DBMX_UPDATE_FAULT_POINT_ID=$(BMX_UPDATE_FAULT_POINT_ID) \
+	-DBMX_UPDATE_FAULT_OCCURRENCE=$(BMX_UPDATE_FAULT_OCCURRENCE)
+endif
 endif
 ifneq ($(BMC64_RS232_LOG_LEVEL),)
 CFLAGS += -DBMC64_RS232_LOG_LEVEL=$(BMC64_RS232_LOG_LEVEL)
@@ -275,18 +320,33 @@ BMX_UPDATE_UPDATER_ABI ?= 1
 CFLAGS += -DBMX_UPDATE_UPDATER_ABI=$(BMX_UPDATE_UPDATER_ABI)
 CPPFLAGS += -DBMX_UPDATE_UPDATER_ABI=$(BMX_UPDATE_UPDATER_ABI)
 
-ifneq ($(strip $(BMX_UPDATE_SIMPLE_PRODUCTION)),)
-ifneq ($(BMX_UPDATE_SIMPLE_PRODUCTION),1)
-$(error BMX_UPDATE_SIMPLE_PRODUCTION must be exactly 1)
+ifeq ($(BMX_UPDATE_TRYBOOT_HARDWARE_VALIDATED),1)
+CFLAGS += -DBMX_UPDATE_TRYBOOT_HARDWARE_VALIDATED
+CPPFLAGS += -DBMX_UPDATE_TRYBOOT_HARDWARE_VALIDATED
 endif
-ifneq ($(BMC64_BUILD_PROFILE),release)
-$(error BMX_UPDATE_SIMPLE_PRODUCTION requires BMC64_BUILD_PROFILE=release)
+ifeq ($(BMX_UPDATE_TRYBOOT_OBSERVATION_HARDWARE_VALIDATED),1)
+CFLAGS += -DBMX_UPDATE_TRYBOOT_OBSERVATION_HARDWARE_VALIDATED
+CPPFLAGS += -DBMX_UPDATE_TRYBOOT_OBSERVATION_HARDWARE_VALIDATED
 endif
-ifneq ($(strip $(BMX_UPDATE_TEST_CHANNEL)),)
-$(error BMX_UPDATE_SIMPLE_PRODUCTION is forbidden in an update-test-channel build)
+ifeq ($(BMX_UPDATE_FATFS_FLUSH_HARDWARE_VALIDATED),1)
+CFLAGS += -DBMX_UPDATE_FATFS_FLUSH_HARDWARE_VALIDATED
+CPPFLAGS += -DBMX_UPDATE_FATFS_FLUSH_HARDWARE_VALIDATED
 endif
-CFLAGS += -DBMX_UPDATE_SIMPLE_PRODUCTION=1
-CPPFLAGS += -DBMX_UPDATE_SIMPLE_PRODUCTION=1
+ifeq ($(BMX_UPDATE_FATFS_RECOVERY_HARDWARE_VALIDATED),1)
+CFLAGS += -DBMX_UPDATE_FATFS_RECOVERY_HARDWARE_VALIDATED
+CPPFLAGS += -DBMX_UPDATE_FATFS_RECOVERY_HARDWARE_VALIDATED
+endif
+ifeq ($(BMX_UPDATE_SELECTOR_HARDWARE_VALIDATED),1)
+CFLAGS += -DBMX_UPDATE_SELECTOR_HARDWARE_VALIDATED
+CPPFLAGS += -DBMX_UPDATE_SELECTOR_HARDWARE_VALIDATED
+endif
+ifeq ($(BMX_UPDATE_WATCHDOG_HARDWARE_VALIDATED),1)
+CFLAGS += -DBMX_UPDATE_WATCHDOG_HARDWARE_VALIDATED
+CPPFLAGS += -DBMX_UPDATE_WATCHDOG_HARDWARE_VALIDATED
+endif
+ifeq ($(BMX_UPDATE_TARGET_UI_VALIDATED),1)
+CFLAGS += -DBMX_UPDATE_TARGET_UI_VALIDATED
+CPPFLAGS += -DBMX_UPDATE_TARGET_UI_VALIDATED
 endif
 
 ifneq ($(strip $(BMX_UPDATE_OWNER_DRAFT_TEST)),)
@@ -350,7 +410,9 @@ update-path-policy-check:
 # the header as an explicit prerequisite, and run the non-mutating consistency
 # check even when the object itself is already current.
 $(BUILD_DIR)/platform/platform.o \
-		$(BUILD_DIR)/update/release_manifest.o: \
+		$(BUILD_DIR)/update/fatfs_prepared_config.o \
+		$(BUILD_DIR)/update/release_manifest.o \
+		$(BUILD_DIR)/update/selector_candidate_backend.o: \
 		$(UPDATE_PATH_POLICY_GENERATOR) $(UPDATE_PATH_POLICY_MODULE) \
 		$(UPDATE_PATH_POLICY_HEADER) | update-path-policy-check
 

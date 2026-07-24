@@ -1,6 +1,8 @@
 #include "update/fatfs_update_filesystem.h"
 
 #include "update/fat_path_policy.h"
+#include "update/update_fault_injection.h"
+#include "update/update_hardware_test_mode.h"
 
 #include <limits.h>
 #include <string.h>
@@ -477,9 +479,11 @@ bool FatFsUpdateFileSystem::CreateFileFresh(const char *path,
     if (!StatAbsolute(absolute, &stat) || stat.type != UpdateNodeType::Missing) {
         return false;
     }
+    BMX_UPDATE_FAULT_CHECKPOINT(UpdateFaultPoint::FatBeforeFreshFileCreate);
     if (!write_handles_[available].Open(this, absolute)) {
         return false;
     }
+    BMX_UPDATE_FAULT_CHECKPOINT(UpdateFaultPoint::FatAfterFreshFileCreate);
     *file = &write_handles_[available];
     return true;
 #else
@@ -497,8 +501,10 @@ bool FatFsUpdateFileSystem::CreateDirectory(const char *path)
     if (stat.type != UpdateNodeType::Missing) {
         return stat.type == UpdateNodeType::Directory;
     }
+    BMX_UPDATE_FAULT_CHECKPOINT(UpdateFaultPoint::FatBeforeDirectoryCreate);
     const FRESULT status = f_mkdir(absolute);
     if (status != FR_OK && status != FR_EXIST) return false;
+    BMX_UPDATE_FAULT_CHECKPOINT(UpdateFaultPoint::FatAfterDirectoryCreate);
     return StatAbsolute(absolute, &stat) &&
            stat.type == UpdateNodeType::Directory;
 #else
@@ -515,8 +521,33 @@ bool FatFsUpdateFileSystem::RemoveFile(const char *path)
     if (!StatAbsolute(absolute, &stat)) return false;
     if (stat.type == UpdateNodeType::Missing) return true;
     if (stat.type != UpdateNodeType::RegularFile) return false;
+    BMX_UPDATE_FAULT_CHECKPOINT(UpdateFaultPoint::FatBeforeFileRemove);
     const FRESULT status = f_unlink(absolute);
     const bool removed = status == FR_OK || IsMissing(status);
+    if (removed) {
+        BMX_UPDATE_FAULT_CHECKPOINT(UpdateFaultPoint::FatAfterFileRemove);
+    }
+    return removed;
+#else
+    return false;
+#endif
+}
+
+bool FatFsUpdateFileSystem::RemoveDirectory(const char *path)
+{
+    char absolute[kFatFsUpdateFileSystemAbsolutePathBytes];
+    if (!Resolve(path, absolute, sizeof(absolute))) return false;
+#if BMX_UPDATE_FILESYSTEM_HAS_FATFS
+    UpdateFileStat stat;
+    if (!StatAbsolute(absolute, &stat)) return false;
+    if (stat.type == UpdateNodeType::Missing) return true;
+    if (stat.type != UpdateNodeType::Directory) return false;
+    BMX_UPDATE_FAULT_CHECKPOINT(UpdateFaultPoint::FatBeforeDirectoryRemove);
+    const FRESULT status = f_unlink(absolute);
+    const bool removed = status == FR_OK || IsMissing(status);
+    if (removed) {
+        BMX_UPDATE_FAULT_CHECKPOINT(UpdateFaultPoint::FatAfterDirectoryRemove);
+    }
     return removed;
 #else
     return false;
@@ -549,9 +580,15 @@ bool FatFsUpdateFileSystem::Rename(const char *source,
         if (!replace_existing) {
             return false;
         }
+        BMX_UPDATE_FAULT_CHECKPOINT(
+            UpdateFaultPoint::FatBeforeReplaceDestinationRemove);
         if (f_unlink(destination_absolute) != FR_OK) return false;
+        BMX_UPDATE_FAULT_CHECKPOINT(
+            UpdateFaultPoint::FatAfterReplaceDestinationRemove);
     }
+    BMX_UPDATE_FAULT_CHECKPOINT(UpdateFaultPoint::FatBeforeRename);
     if (f_rename(source_absolute, destination_absolute) != FR_OK) return false;
+    BMX_UPDATE_FAULT_CHECKPOINT(UpdateFaultPoint::FatAfterRename);
     UpdateFileStat source_after;
     UpdateFileStat destination_after;
     return StatAbsolute(source_absolute, &source_after) &&
@@ -574,6 +611,68 @@ bool FatFsUpdateFileSystem::SyncContainingDirectory(const char *path)
     // and f_rename implementations call sync_fs/CTRL_SYNC before returning.
     // This acknowledges that completed operation; the separate capability
     // remains false unless the lower layer has passed the hardware gate.
+    BMX_UPDATE_FAULT_CHECKPOINT(UpdateFaultPoint::FatBeforeDirectorySync);
+    BMX_UPDATE_FAULT_CHECKPOINT(UpdateFaultPoint::FatAfterDirectorySync);
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool FatFsUpdateFileSystem::DirectoryContainsOnly(
+    const char *path, const char *const *expected_names,
+    size_t expected_name_count, bool *only_expected)
+{
+    if (only_expected != 0) *only_expected = false;
+    if (path == 0 || only_expected == 0 ||
+        (expected_name_count != 0U && expected_names == 0)) {
+        return false;
+    }
+    for (size_t index = 0U; index < expected_name_count; ++index) {
+        const char *name = expected_names[index];
+        if (name == 0 || name[0] == '\0' || strchr(name, '/') != 0 ||
+            strchr(name, '\\') != 0) {
+            return false;
+        }
+    }
+    char absolute[kFatFsUpdateFileSystemAbsolutePathBytes];
+    if (!Resolve(path, absolute, sizeof(absolute))) return false;
+#if BMX_UPDATE_FILESYSTEM_HAS_FATFS
+#if defined(BMX_TEST_FAKE_FF_DIRECTORY_TYPE)
+    FF_DIR directory;
+#else
+    DIR directory;
+#endif
+    memset(&directory, 0, sizeof(directory));
+    if (f_opendir(&directory, absolute) != FR_OK) return false;
+    bool only = true;
+    bool io_ok = true;
+    for (;;) {
+        FILINFO info;
+        memset(&info, 0, sizeof(info));
+        if (f_readdir(&directory, &info) != FR_OK) {
+            io_ok = false;
+            break;
+        }
+        if (info.fname[0] == '\0') break;
+        if (strcmp(info.fname, ".") == 0 || strcmp(info.fname, "..") == 0) {
+            continue;
+        }
+        bool matched = false;
+        for (size_t index = 0U; index < expected_name_count; ++index) {
+            if (SameFatPath(info.fname, expected_names[index])) {
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            only = false;
+            break;
+        }
+    }
+    if (f_closedir(&directory) != FR_OK) io_ok = false;
+    if (!io_ok) return false;
+    *only_expected = only;
     return true;
 #else
     return false;
@@ -588,6 +687,19 @@ bool FatFsUpdateFileSystem::GetFreeSpace(uint64_t *bytes)
 #if BMX_UPDATE_FILESYSTEM_HAS_FATFS
     uint64_t allocation_unit = 0U;
     return QueryVolumeGeometry(volume_root_, bytes, &allocation_unit);
+#else
+    return false;
+#endif
+}
+
+bool FatFsUpdateFileSystem::GetAllocationUnit(uint64_t *bytes)
+{
+    if (bytes == 0) return false;
+    *bytes = 0U;
+    if (!configured_) return false;
+#if BMX_UPDATE_FILESYSTEM_HAS_FATFS
+    uint64_t free_bytes = 0U;
+    return QueryVolumeGeometry(volume_root_, &free_bytes, bytes);
 #else
     return false;
 #endif
@@ -608,13 +720,41 @@ bool FatFsUpdateFileSystem::GetVolumeSize(uint64_t *bytes)
 #endif
 }
 
+bool FatFsUpdateFileSystem::GetDurabilityCapabilities(
+    UpdateDurabilityCapabilities *capabilities)
+{
+    if (capabilities == 0) return false;
+    memset(capabilities, 0, sizeof(*capabilities));
+#if BMX_UPDATE_FILESYSTEM_HAS_FATFS && defined(BMX_UPDATE_ENABLE_FATFS_FLUSH)
+    // The gate only validates the lower-layer effects of f_sync and the
+    // sync_fs/CTRL_SYNC calls made by FatFs namespace mutators.  It cannot
+    // turn FAT's multi-step rename into a crash-atomic operation.
+    capabilities->durable_file_sync = true;
+    capabilities->durable_directory_updates = true;
+#endif
+    capabilities->crash_safe_fresh_rename = false;
+    capabilities->crash_safe_replace_with_backup = false;
+#if BMX_UPDATE_FILESYSTEM_HAS_FATFS && \
+    defined(BMX_UPDATE_ENABLE_FATFS_FLUSH) && \
+    defined(BMX_UPDATE_ENABLE_FATFS_RECOVERY)
+    // This does not claim that FAT rename is atomic. It enables the
+    // alternative, end-to-end journal/snapshot/selector recovery contract
+    // only after controlled power removal has passed on every supported
+    // board/media class.
+    capabilities->power_loss_recovery_validated = true;
+#endif
+    return true;
+}
+
 bool FatFsUpdateFileSystem::VerifySyncedWrite(WriteHandle &handle)
 {
     if (!configured_ || !handle.open_ || handle.owner_ != this) return false;
 #if BMX_UPDATE_FILESYSTEM_HAS_FATFS
+    BMX_UPDATE_FAULT_CHECKPOINT(UpdateFaultPoint::FatBeforeFileSync);
     if (f_sync(&handle.file_) != FR_OK) {
         return false;
     }
+    BMX_UPDATE_FAULT_CHECKPOINT(UpdateFaultPoint::FatAfterFileSync);
     if (static_cast<uint64_t>(f_size(&handle.file_)) != handle.written_) {
         return false;
     }

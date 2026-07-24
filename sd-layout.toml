@@ -39,8 +39,18 @@ to = "cmdline.txt"
 mode = "config"
 
 [[both.file]]
+from = "generated/tryboot.txt"
+to = "tryboot.txt"
+mode = "config"
+
+[[both.file]]
 from = "generated/bmx-active-kernel.txt"
 to = "bmx-active-kernel.txt"
+mode = "config"
+
+[[both.file]]
+from = "generated/bmx-tryboot-kernel.txt"
+to = "bmx-tryboot-kernel.txt"
 mode = "config"
 
 [[both.file]]
@@ -900,17 +910,8 @@ mode = "keep"
 features = ["roms"]
 optional = true
 
-# Device-only update rules. No `from` means that staging never copies a file.
-# The two config paths let a later Full release add its Tryboot layout through
-# the Simple updater; keep rules document local content that must be preserved.
-[[both.file]]
-to = "tryboot.txt"
-mode = "config"
-
-[[both.file]]
-to = "bmx-tryboot-kernel.txt"
-mode = "config"
-
+# Device-only keep rules.  No `from` means that staging never copies a file;
+# the rule only documents local user content that the updater must preserve.
 [[both.file]]
 to = "bmx-recovery-pi4.img"
 mode = "keep"
