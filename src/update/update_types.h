@@ -29,14 +29,6 @@ struct ByteView {
     ByteView(const uint8_t *bytes, size_t length) : data(bytes), size(length) {}
 };
 
-struct MutableByteView {
-    uint8_t *data;
-    size_t size;
-
-    MutableByteView() : data(0), size(0) {}
-    MutableByteView(uint8_t *bytes, size_t length) : data(bytes), size(length) {}
-};
-
 bool IsKnownBoardFamily(BoardFamily board);
 
 }  // namespace update

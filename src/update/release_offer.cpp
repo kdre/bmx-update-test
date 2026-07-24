@@ -35,67 +35,6 @@ bool StorageIsValid(const ReleaseOfferStorage &storage) {
            storage.manifest_directory_capacity != 0U;
 }
 
-bool SchemaAccepts(const ManifestConfigSchema &schema, uint32_t version) {
-    for (size_t i = 0U; i < schema.accepted_version_count; ++i) {
-        if (schema.accepted_versions[i] == version) return true;
-    }
-    return false;
-}
-
-const InstalledSchemaVersion *FindInstalledSchema(
-    const InstalledBuildInfo &installed, ConfigArea area) {
-    for (size_t i = 0U; i < installed.schema_count; ++i) {
-        if (installed.schemas[i].area == area) return &installed.schemas[i];
-    }
-    return 0;
-}
-
-const ManifestMigration *FindMigration(const ReleaseManifest &manifest,
-                                       ConfigArea area,
-                                       uint32_t from_version,
-                                       uint32_t to_version) {
-    for (size_t i = 0U; i < manifest.migration_count; ++i) {
-        const ManifestMigration &migration = manifest.migrations[i];
-        if (migration.area == area && migration.from_version == from_version &&
-            migration.to_version == to_version) {
-            return &migration;
-        }
-    }
-    return 0;
-}
-
-OfferConfigurationStatus ClassifySchemas(ReleaseOffer *offer) {
-    bool blocked = false;
-    offer->reset_area_count = 0U;
-    for (size_t i = 0U; i < offer->manifest.schema_count; ++i) {
-        const ManifestConfigSchema &target = offer->manifest.schemas[i];
-        const InstalledSchemaVersion *source =
-            FindInstalledSchema(offer->installed, target.area);
-        if (source == 0 || source->version > target.target_version) {
-            blocked = true;
-            continue;
-        }
-        if (SchemaAccepts(target, source->version)) continue;
-        const ManifestMigration *migration = FindMigration(
-            offer->manifest, target.area, source->version,
-            target.target_version);
-        if (migration == 0) {
-            blocked = true;
-            continue;
-        }
-        if (!migration->lossy) continue;
-        if (offer->reset_area_count >= kMaximumConfigAreas) {
-            blocked = true;
-            continue;
-        }
-        offer->reset_areas[offer->reset_area_count++] = target.area;
-    }
-    if (blocked) return OfferConfigurationStatus::BlockedIncompatible;
-    return offer->reset_area_count == 0U
-               ? OfferConfigurationStatus::Compatible
-               : OfferConfigurationStatus::ResetConfirmationRequired;
-}
-
 }  // namespace
 
 ReleaseOfferResult BuildReleaseOffer(
@@ -238,13 +177,6 @@ ReleaseOfferResult BuildReleaseOfferForMode(
         result.status = ReleaseOfferStatus::ReleaseEpochRegressed;
         return result;
     }
-    offer->configuration_status = ClassifySchemas(offer);
-    // The schema versions in BMX-BUILD.json describe the release defaults,
-    // not necessarily the files that are currently present on the boot
-    // volume.  Users may have copied or edited configuration manually.  Keep
-    // this classification as advisory discovery information only; the
-    // foreground installer re-reads and classifies the actual local files
-    // immediately before it consumes consent or writes anything.
     result.status = ReleaseOfferStatus::Ok;
     return result;
 }
@@ -272,10 +204,6 @@ const char *ReleaseOfferStatusString(ReleaseOfferStatus status) {
         return "release is not an eligible upgrade";
     case ReleaseOfferStatus::ReleaseEpochRegressed:
         return "release timestamp regressed";
-    case ReleaseOfferStatus::OnlineSourceUnsupported:
-        return "installed release has no signed online source inventory";
-    case ReleaseOfferStatus::ConfigurationBlocked:
-        return "configuration is not safely compatible";
     }
     return "unknown release offer error";
 }

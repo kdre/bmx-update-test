@@ -56,7 +56,7 @@ struct ReleaseClientResult {
 
 // Performs network traffic only when |start_context| identifies the confirmed
 // Update menu action and the network feature is already enabled and ready.
-// Merely constructing this client or parsing local recovery state is inert.
+// Merely constructing this client is inert.
 ReleaseClientResult CheckLatestRelease(
     const UpdateStartContext &start_context,
     ByteView installed_build_info,

@@ -693,9 +693,9 @@ ManifestParseStatus Parser::ParseFiles(int index, bool store,
     uint64_t installed_size = 0U;
     uint16_t required_machine_kernels = 0U;
     bool required_config = false;
-    bool required_tryboot = false;
+    bool has_tryboot = false;
     bool required_active_selector = false;
-    bool required_candidate_selector = false;
+    bool has_candidate_selector = false;
     for (size_t i = 0U; i < count; ++i) {
         const int entry = DirectChild(index, i);
         if (!ExactObject(entry, kFileFields,
@@ -780,17 +780,17 @@ ManifestParseStatus Parser::ParseFiles(int index, bool store,
             }
         }
         required_config = required_config || strcmp(parsed.path, "config.txt") == 0;
-        required_tryboot = required_tryboot || strcmp(parsed.path, "tryboot.txt") == 0;
+        has_tryboot = has_tryboot || strcmp(parsed.path, "tryboot.txt") == 0;
         required_active_selector = required_active_selector ||
             strcmp(parsed.path, "bmx-active-kernel.txt") == 0;
-        required_candidate_selector = required_candidate_selector ||
+        has_candidate_selector = has_candidate_selector ||
             strcmp(parsed.path, "bmx-tryboot-kernel.txt") == 0;
         if (store) storage_.files[i] = parsed;
         memcpy(previous, parsed.path, strlen(parsed.path) + 1U);
     }
     if (required_machine_kernels != kRequiredKernelMachineMask ||
-        !required_config || !required_tryboot || !required_active_selector ||
-        !required_candidate_selector ||
+        !required_config || !required_active_selector ||
+        has_tryboot != has_candidate_selector ||
         installed_size != asset->installed_size) {
         return ManifestParseStatus::InventoryMismatch;
     }

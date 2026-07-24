@@ -221,9 +221,7 @@ FatFsConfigSnapshotStatus FatFsConfigSnapshot::Load(const char *volume) {
         {ConfigArea::Machines, "machines.defaults.ini"},
         {ConfigArea::Machines, "machines.local.ini"},
         {ConfigArea::ConfigManagedBlock, "config.txt"},
-        {ConfigArea::UpdateState, "BMX-BUILD.json"},
-        {ConfigArea::UpdateState, ".bmx-update/transaction/journal.a"},
-        {ConfigArea::UpdateState, ".bmx-update/transaction/journal.b"}
+        {ConfigArea::UpdateState, "BMX-BUILD.json"}
     };
     for (size_t i = 0U; i < sizeof(fixed) / sizeof(fixed[0]); ++i) {
         size_t owned = 0U;

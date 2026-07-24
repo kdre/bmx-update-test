@@ -112,8 +112,7 @@ BMC64_OBJS = main.o kernel.o viceoptions.o viceapp.o crt_pi_idx.o crt_pi_rgb.o \
              update/build_info.o update/body_sinks.o \
              update/circle_secure_stream.o \
              update/config_migration.o update/config_schema.o \
-             update/consent_digest_input.o \
-             update/crc32.o update/draft_test_ticket.o \
+             update/draft_test_ticket.o \
              update/fat_path_policy.o \
              update/github_ca_bundle.o \
              update/fatfs_config_snapshot.o \
@@ -178,7 +177,7 @@ CFLAGS += -I $(SRC_DIR) -I . -I third_party/common -I "$(NEWLIBDIR)/include" -I 
 
 # Circle's freestanding operator new/new[] returns null on allocation failure.
 # GCC may otherwise assume throwing-new semantics and remove the explicit null
-# checks which protect the updater's low-memory recovery paths.
+# checks which protect the updater's low-memory failure paths.
 CPPFLAGS += -fcheck-new
 
 ifeq ($(BMC64_BUILD_PROFILE),debug)

@@ -291,14 +291,6 @@ void ui_update_progress_present(unsigned phase, unsigned progress_per_mille,
 int ui_update_progress_pump(void);
 void ui_update_progress_end(void);
 
-// Network-free post-boot recovery overlay.  It is non-cancelable and each
-// phase receives a monotone 0..1000 value. present() renders synchronously so
-// candidate validation is visible even before the emulator's first frame.
-int ui_update_recovery_begin(void);
-void ui_update_recovery_present(unsigned phase,
-                                unsigned progress_per_mille);
-void ui_update_recovery_end(void);
-
 void ui_geometry_changed(int dpx, int dpy,
                          int fbw, int fbh,
                          int sw, int sh,

@@ -523,23 +523,6 @@ bool FatFsUpdateFileSystem::RemoveFile(const char *path)
 #endif
 }
 
-bool FatFsUpdateFileSystem::RemoveDirectory(const char *path)
-{
-    char absolute[kFatFsUpdateFileSystemAbsolutePathBytes];
-    if (!Resolve(path, absolute, sizeof(absolute))) return false;
-#if BMX_UPDATE_FILESYSTEM_HAS_FATFS
-    UpdateFileStat stat;
-    if (!StatAbsolute(absolute, &stat)) return false;
-    if (stat.type == UpdateNodeType::Missing) return true;
-    if (stat.type != UpdateNodeType::Directory) return false;
-    const FRESULT status = f_unlink(absolute);
-    const bool removed = status == FR_OK || IsMissing(status);
-    return removed;
-#else
-    return false;
-#endif
-}
-
 bool FatFsUpdateFileSystem::Rename(const char *source,
                                    const char *destination,
                                    bool replace_existing)
@@ -597,66 +580,6 @@ bool FatFsUpdateFileSystem::SyncContainingDirectory(const char *path)
 #endif
 }
 
-bool FatFsUpdateFileSystem::DirectoryContainsOnly(
-    const char *path, const char *const *expected_names,
-    size_t expected_name_count, bool *only_expected)
-{
-    if (only_expected != 0) *only_expected = false;
-    if (path == 0 || only_expected == 0 ||
-        (expected_name_count != 0U && expected_names == 0)) {
-        return false;
-    }
-    for (size_t index = 0U; index < expected_name_count; ++index) {
-        const char *name = expected_names[index];
-        if (name == 0 || name[0] == '\0' || strchr(name, '/') != 0 ||
-            strchr(name, '\\') != 0) {
-            return false;
-        }
-    }
-    char absolute[kFatFsUpdateFileSystemAbsolutePathBytes];
-    if (!Resolve(path, absolute, sizeof(absolute))) return false;
-#if BMX_UPDATE_FILESYSTEM_HAS_FATFS
-#if defined(BMX_TEST_FAKE_FF_DIRECTORY_TYPE)
-    FF_DIR directory;
-#else
-    DIR directory;
-#endif
-    memset(&directory, 0, sizeof(directory));
-    if (f_opendir(&directory, absolute) != FR_OK) return false;
-    bool only = true;
-    bool io_ok = true;
-    for (;;) {
-        FILINFO info;
-        memset(&info, 0, sizeof(info));
-        if (f_readdir(&directory, &info) != FR_OK) {
-            io_ok = false;
-            break;
-        }
-        if (info.fname[0] == '\0') break;
-        if (strcmp(info.fname, ".") == 0 || strcmp(info.fname, "..") == 0) {
-            continue;
-        }
-        bool matched = false;
-        for (size_t index = 0U; index < expected_name_count; ++index) {
-            if (SameFatPath(info.fname, expected_names[index])) {
-                matched = true;
-                break;
-            }
-        }
-        if (!matched) {
-            only = false;
-            break;
-        }
-    }
-    if (f_closedir(&directory) != FR_OK) io_ok = false;
-    if (!io_ok) return false;
-    *only_expected = only;
-    return true;
-#else
-    return false;
-#endif
-}
-
 bool FatFsUpdateFileSystem::GetFreeSpace(uint64_t *bytes)
 {
     if (bytes == 0) return false;
@@ -665,19 +588,6 @@ bool FatFsUpdateFileSystem::GetFreeSpace(uint64_t *bytes)
 #if BMX_UPDATE_FILESYSTEM_HAS_FATFS
     uint64_t allocation_unit = 0U;
     return QueryVolumeGeometry(volume_root_, bytes, &allocation_unit);
-#else
-    return false;
-#endif
-}
-
-bool FatFsUpdateFileSystem::GetAllocationUnit(uint64_t *bytes)
-{
-    if (bytes == 0) return false;
-    *bytes = 0U;
-    if (!configured_) return false;
-#if BMX_UPDATE_FILESYSTEM_HAS_FATFS
-    uint64_t free_bytes = 0U;
-    return QueryVolumeGeometry(volume_root_, &free_bytes, bytes);
 #else
     return false;
 #endif
@@ -696,16 +606,6 @@ bool FatFsUpdateFileSystem::GetVolumeSize(uint64_t *bytes)
 #else
     return false;
 #endif
-}
-
-bool FatFsUpdateFileSystem::GetDurabilityCapabilities(
-    UpdateDurabilityCapabilities *capabilities)
-{
-    if (capabilities == 0) return false;
-    memset(capabilities, 0, sizeof(*capabilities));
-    capabilities->crash_safe_fresh_rename = false;
-    capabilities->crash_safe_replace_with_backup = false;
-    return true;
 }
 
 bool FatFsUpdateFileSystem::VerifySyncedWrite(WriteHandle &handle)

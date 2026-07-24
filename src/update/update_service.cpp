@@ -433,7 +433,6 @@ CurrentConfigStatus AssessCurrentConfiguration(char *detail,
             ++plan.compatible_count;
         } else {
             area.classification = ConfigClassification::ResetRequired;
-            area.migration_id[0] = '\0';
             ++plan.reset_count;
         }
     }

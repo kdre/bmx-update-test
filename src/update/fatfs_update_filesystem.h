@@ -14,9 +14,8 @@
 namespace bmx {
 namespace update {
 
-// Installer paths can include a transaction prefix in addition to a ZIP
-// member name.  Every buffer is fixed-size and every public path is resolved
-// below the configured FatFs volume root.
+// Every buffer is fixed-size and every public path is resolved below the
+// configured FatFs volume root.
 static const size_t kFatFsUpdateFileSystemRelativePathBytes = 512U;
 static const size_t kFatFsUpdateFileSystemAbsolutePathBytes = 544U;
 static const size_t kFatFsUpdateFileSystemReadHandles = 2U;
@@ -41,19 +40,11 @@ public:
     bool CreateFileFresh(const char *path, UpdateWriteFile **file);
     bool CreateDirectory(const char *path);
     bool RemoveFile(const char *path);
-    bool RemoveDirectory(const char *path);
     bool Rename(const char *source, const char *destination,
                 bool replace_existing);
     bool SyncContainingDirectory(const char *path);
-    bool DirectoryContainsOnly(const char *path,
-                               const char *const *expected_names,
-                               size_t expected_name_count,
-                               bool *only_expected);
     bool GetFreeSpace(uint64_t *bytes);
     bool GetVolumeSize(uint64_t *bytes);
-    bool GetAllocationUnit(uint64_t *bytes);
-    bool GetDurabilityCapabilities(
-        UpdateDurabilityCapabilities *capabilities);
 
 private:
     class ReadHandle : public UpdateReadFile {

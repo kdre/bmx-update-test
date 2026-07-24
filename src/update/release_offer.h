@@ -32,8 +32,7 @@ struct ReleaseOfferStorage {
 
 enum class OfferConfigurationStatus : uint8_t {
     Compatible = 0,
-    ResetConfirmationRequired,
-    BlockedIncompatible
+    ResetConfirmationRequired
 };
 
 struct ReleaseOffer {
@@ -59,9 +58,7 @@ enum class ReleaseOfferStatus : uint8_t {
     ReleaseAssetsInvalid,
     ZipMetadataMismatch,
     ReleaseRejected,
-    ReleaseEpochRegressed,
-    OnlineSourceUnsupported,
-    ConfigurationBlocked
+    ReleaseEpochRegressed
 };
 
 struct ReleaseOfferResult {
